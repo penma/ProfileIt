@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 
 namespace ProfileIt
@@ -29,23 +30,35 @@ namespace ProfileIt
             }
         }
 
+        private String goodMethodName(MethodBase mb)
+        {
+            /* TODO: Arguments etc. */
+            return mb.DeclaringType.FullName + "#" + mb.Name;
+        }
+
         private void PeriodicStats()
         {
-            IDictionary<string, ProfileData.MethodProfileData> pd = ProfileData.Reset();
+            IDictionary<MethodBase, List<ProfileData.MethodProfileData>> pd = ProfileData.Reset();
 
-            long ticksTotalOverall = pd.Sum(x => x.Value.ticksTotal);
-            Logger.Log(String.Format("{0,-30} | {1,5}% | {2,12} | {3,10}us | {4,8}c",
-                "Name", "Incl", "TickIncl", "Incl", "Call#"
+            long ticksTotalOverall = pd.Sum(x => x.Value.Sum(y => y.ticksTotal));
+            Logger.Log(String.Format("{0,-60} -> {5,-60} | {1,5}% | {2,12} | {3,10}us | {4,8}c",
+                "Name", "Incl", "TickIncl", "Incl ", "Call# ", "Caller"
                 ));
-            foreach (KeyValuePair<String, ProfileData.MethodProfileData> fd in pd.OrderByDescending(x => x.Value.ticksTotal))
+            foreach (KeyValuePair<MethodBase, List<ProfileData.MethodProfileData>> fd in pd.OrderByDescending(x => x.Value.Sum(y => y.ticksTotal)))
             {
-                Logger.Log(String.Format("{0,-30} | {1,5:F2}% | {2,12} | {3,10:F4}us | {4,8}c",
-                    fd.Key,
-                    (100f * fd.Value.ticksTotal) / ticksTotalOverall,
-                    fd.Value.ticksTotal,
-                    (fd.Value.ticksTotal * 1000000f) / Stopwatch.Frequency,
-                    fd.Value.calls
-                    ));
+                String calleeName = goodMethodName(fd.Key);
+                foreach (ProfileData.MethodProfileData md in fd.Value)
+                {
+                    String callerName = goodMethodName(md.caller);
+                    Logger.Log(String.Format("{0,-60} -> {5,-60} | {1,5:F2}% | {2,12} | {3,10:F2}us | {4,8}c",
+                        calleeName,
+                        (100f * md.ticksTotal) / ticksTotalOverall,
+                        md.ticksTotal,
+                        (md.ticksTotal * 1000000f) / Stopwatch.Frequency,
+                        md.calls,
+                        callerName
+                        ));
+                }
             }
             Logger.Log("");
         }

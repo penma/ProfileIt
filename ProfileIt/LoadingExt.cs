@@ -19,30 +19,58 @@ namespace ProfileIt
         {
         }
 
-        public override void OnCreated(ILoading loading)
-        {
-            base.OnCreated(loading);
-            Logger.Init();
-        }
-
-        public override void OnReleased()
-        {
-            Logger.Close();
-            base.OnReleased();
-        }
-
         private HarmonyInstance harmony;
+        private HarmonyMethod simPre;
+        private HarmonyMethod simPost;
 
+        
 
-        private static void PreSimulationStep(ISimulationManager __instance, ref Stopwatch __state)
+        private static void PreProfiledMethod(ref ProfileData.ProfileState __state)
         {
-            __state = Stopwatch.StartNew();
+            ProfileData.PreProfile(out __state);
         }
 
-        private static void PostSimulationStep(ISimulationManager __instance, ref Stopwatch __state)
+        private static void PostProfiledMethod(ref ProfileData.ProfileState __state)
         {
-            __state.Stop();
-            ProfileData.AddProfileIncl(__instance.GetName(), ref __state);
+            ProfileData.PostProfile(ref __state);
+        }
+
+        private void HookMethod(MethodInfo method)
+        {
+            Logger.Log("      Hooking method " + method.Name);
+            try
+            {
+                if (harmony.IsPatched(method) != null)
+                {
+                    Logger.Log("    " + method.Name + " is already patched!!");
+                }
+                else
+                {
+                    harmony.Patch(method, simPre, simPost);
+                }
+            } catch (Exception e)
+            {
+                Logger.Log("    Failed to patch " + method.Name + ":\n" + e.ToString());
+            }
+        }
+
+        private void HookModule(Module module)
+        {
+            Logger.Log("Hooking all of module " + module.ScopeName);
+            foreach (Type type in module.GetTypes())
+            {
+                if (type.FullName.Contains("`") || type.FullName != "TrafficManager.Manager.Impl.SpeedLimitManager")
+                {
+                    // no idea  what it is, but it breaks, TODO check later
+                    Logger.Log("   Skipping type " + type.FullName);
+                    continue;
+                }
+                Logger.Log("   Hooking type " + type.FullName);
+                foreach (MethodInfo mi in type.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.Instance))
+                {
+                    HookMethod(mi);
+                }
+            }
         }
 
         private void StartHarmony()
@@ -53,8 +81,8 @@ namespace ProfileIt
 
             /* Patch SimulationStep of all managers */
 
-            HarmonyMethod simPre = new HarmonyMethod(typeof(LoadingExt).GetMethod("PreSimulationStep", BindingFlags.NonPublic | BindingFlags.Static));
-            HarmonyMethod simPost = new HarmonyMethod(typeof(LoadingExt).GetMethod("PostSimulationStep", BindingFlags.NonPublic | BindingFlags.Static));
+            simPre = new HarmonyMethod(typeof(LoadingExt).GetMethod("PreProfiledMethod", BindingFlags.NonPublic | BindingFlags.Static));
+            simPost = new HarmonyMethod(typeof(LoadingExt).GetMethod("PostProfiledMethod", BindingFlags.NonPublic | BindingFlags.Static));
             if (simPre == null || simPost == null)
             {
                 Logger.Log("E: simPre/simPost hooks not found, exiting");
@@ -82,13 +110,18 @@ namespace ProfileIt
                     m_managers.m_size
                     ));
                 MethodInfo orig = sm.GetType().GetMethod("SimulationStep");
-                if (harmony.IsPatched(orig) != null)
+                HookMethod(orig);
+            }
+
+            /* Hook all of TMPE for the lulz */
+            foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                foreach (Module m in a.GetLoadedModules())
                 {
-                    Logger.Log("   already patched!!");
-                }
-                else
-                {
-                    harmony.Patch(orig, simPre, simPost);
+                    if (m.ScopeName == "TrafficManager.dll")
+                    {
+                        HookModule(m);
+                    }
                 }
             }
 
@@ -113,6 +146,7 @@ namespace ProfileIt
             Logger.Log(String.Format("Stopwatch precision: {0} ticks per second or {1:F3} microseconds resolution",
                 Stopwatch.Frequency, 1000f / Stopwatch.Frequency
                 ));
+
             StartHarmony();
         }
 
